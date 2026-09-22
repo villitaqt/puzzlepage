@@ -40,6 +40,9 @@
   let img = null;
   let pw = 0, ph = 0, pad = 0;
   let showGhost = false;
+  let showPreview = false;
+  let thinBorders = false;
+  try { thinBorders = localStorage.getItem('puzzle-thin') === '1'; } catch (_) {}
 
   const timer = { running: false, finished: false, elapsed: 0, base: 0 };
   const flashes = new Map(); // pieceId -> timestamp de encaje
@@ -112,6 +115,13 @@
     g.save();
     g.clip(piece.path);
     g.drawImage(img, -piece.c * pw, -piece.r * ph, puzzle.boardW, puzzle.boardH);
+    if (thinBorders) {
+      g.restore();
+      g.lineWidth = 0.3;
+      g.strokeStyle = 'rgba(0,0,0,0.3)';
+      g.stroke(piece.path);
+      return cv;
+    }
     // Relieve: luz arriba-izquierda, sombra abajo-derecha
     g.lineWidth = 2.5 / res + 1;
     g.translate(0.8, 0.8);
@@ -173,6 +183,11 @@
     flashes.clear();
     if (!sameImage) fitView();
     updateHud();
+  }
+
+  function rerenderPieces() {
+    if (!puzzle || !img) return;
+    for (const p of pieces) p.canvas = renderPieceCanvas(p);
   }
 
   function groupMembers(piece) {
@@ -305,6 +320,18 @@
             ctx.restore();
           }
         }
+      }
+
+      // Preview: imagen completa encima del tablero mientras se mantiene el botón
+      if (showPreview) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+        ctx.shadowBlur = 30 * cam.scale * dpr;
+        ctx.drawImage(img, bx, by, bw, bh);
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 2 / cam.scale;
+        ctx.strokeRect(bx, by, bw, bh);
       }
 
       // Manitos de los demás (tamaño fijo en pantalla)
@@ -591,6 +618,25 @@
 
     socket.on('timer', setTimer);
 
+    socket.on('arranged', ({ by, boardX, boardY, worldW, worldH, pieces: list }) => {
+      if (!puzzle) return;
+      Object.assign(puzzle, { boardX, boardY, worldW, worldH });
+      drag = null;
+      canvas.classList.remove('dragging');
+      for (const s of list) {
+        const p = pieces[s.id];
+        if (!p) continue;
+        p.x = s.x;
+        p.y = s.y;
+        p.g = s.g;
+        p.placed = s.placed;
+        p.heldBy = null;
+      }
+      orderDirty = true;
+      fitView();
+      toast(`${by} ordenó las piezas`);
+    });
+
     socket.on('pieceGrabbed', ({ id, by, z }) => {
       const p = pieces[id];
       if (!p) return;
@@ -764,6 +810,32 @@
   });
 
   $('ghostToggle').addEventListener('change', (e) => { showGhost = e.target.checked; });
+
+  $('thinToggle').checked = thinBorders;
+  $('thinToggle').addEventListener('change', (e) => {
+    thinBorders = e.target.checked;
+    try { localStorage.setItem('puzzle-thin', thinBorders ? '1' : '0'); } catch (_) {}
+    rerenderPieces();
+  });
+
+  const previewBtn = $('previewBtn');
+  const setPreview = (on) => {
+    showPreview = on;
+    previewBtn.classList.toggle('active', on);
+  };
+  previewBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    setPreview(true);
+    try { previewBtn.setPointerCapture(e.pointerId); } catch (_) { /* sin captura, igual funciona */ }
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) =>
+    previewBtn.addEventListener(ev, () => setPreview(false)));
+  previewBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('blur', () => setPreview(false));
+
+  $('arrangeBtn').addEventListener('click', () => {
+    if (socket && puzzle && !timer.finished) socket.emit('arrange');
+  });
   $('fitBtn').addEventListener('click', fitView);
 
   resize();

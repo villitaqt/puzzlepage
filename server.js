@@ -192,6 +192,100 @@ function tryJoin(pz, piece) {
   return joins;
 }
 
+// Reacomoda todos los grupos sueltos alrededor del tablero sin que se superpongan.
+// Usa una grilla de celdas (con lugar para las pestañas) y ubica primero los grupos
+// más grandes en las celdas libres más cercanas al tablero.
+function arrangePieces(pz) {
+  const pw = pz.boardW / pz.cols;
+  const ph = pz.boardH / pz.rows;
+  const tab = 0.36; // cuánto sobresale una pestaña, relativo a la pieza
+  const uw = pw * (1 + tab * 2) + pw * 0.1;
+  const uh = ph * (1 + tab * 2) + ph * 0.1;
+
+  // Celda (i, j) -> esquina superior izquierda en el mundo, centrada en el tablero
+  const cx = pz.boardX + pz.boardW / 2 - uw / 2;
+  const cy = pz.boardY + pz.boardH / 2 - uh / 2;
+  const cellX = (i) => cx + i * uw;
+  const cellY = (j) => cy + j * uh;
+  const margin = Math.max(pw, ph) * 0.25;
+  const blocked = (i, j) =>
+    cellX(i) < pz.boardX + pz.boardW + margin && cellX(i) + uw > pz.boardX - margin &&
+    cellY(j) < pz.boardY + pz.boardH + margin && cellY(j) + uh > pz.boardY - margin;
+
+  // Agrupar piezas sueltas
+  const groups = new Map();
+  for (const p of pz.pieces) {
+    p.heldBy = null;
+    if (p.placed) continue;
+    if (!groups.has(p.g)) groups.set(p.g, []);
+    groups.get(p.g).push(p);
+  }
+  const list = [...groups.values()].map((members) => {
+    const minR = Math.min(...members.map((p) => p.r));
+    const minC = Math.min(...members.map((p) => p.c));
+    const spanR = Math.max(...members.map((p) => p.r)) - minR + 1;
+    const spanC = Math.max(...members.map((p) => p.c)) - minC + 1;
+    return {
+      members, minR, minC,
+      cw: Math.ceil((spanC * pw + pw * tab * 2) / uw),
+      ch: Math.ceil((spanR * ph + ph * tab * 2) / uh),
+    };
+  }).sort((a, b) => b.cw * b.ch - a.cw * a.ch);
+
+  // Candidatos ordenados por cercanía "elíptica" al tablero
+  const radius = Math.ceil(Math.sqrt(pz.pieces.length)) + Math.max(pz.cols, pz.rows) + 4;
+  const candidates = [];
+  for (let j = -radius; j <= radius; j++) {
+    for (let i = -radius; i <= radius; i++) {
+      const dx = (cellX(i) + uw / 2 - (pz.boardX + pz.boardW / 2)) / pz.boardW;
+      const dy = (cellY(j) + uh / 2 - (pz.boardY + pz.boardH / 2)) / pz.boardH;
+      candidates.push({ i, j, d: dx * dx * 0.6 + dy * dy });
+    }
+  }
+  candidates.sort((a, b) => a.d - b.d);
+
+  const used = new Set();
+  const key = (i, j) => i + ',' + j;
+  const fits = (i0, j0, cw, ch) => {
+    for (let j = j0; j < j0 + ch; j++) {
+      for (let i = i0; i < i0 + cw; i++) {
+        if (used.has(key(i, j)) || blocked(i, j)) return false;
+      }
+    }
+    return true;
+  };
+
+  for (const g of list) {
+    const spot = candidates.find(({ i, j }) => fits(i, j, g.cw, g.ch));
+    if (!spot) continue; // no debería pasar
+    for (let j = spot.j; j < spot.j + g.ch; j++) for (let i = spot.i; i < spot.i + g.cw; i++) used.add(key(i, j));
+    const baseX = cellX(spot.i) + pw * tab;
+    const baseY = cellY(spot.j) + ph * tab;
+    for (const p of g.members) {
+      p.x = baseX + (p.c - g.minC) * pw;
+      p.y = baseY + (p.r - g.minR) * ph;
+    }
+  }
+
+  // Ajustar el mundo para que todo quede con coordenadas positivas
+  const pad = Math.max(pw, ph);
+  let minX = pz.boardX, minY = pz.boardY;
+  let maxX = pz.boardX + pz.boardW, maxY = pz.boardY + pz.boardH;
+  for (const p of pz.pieces) {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x + pw); maxY = Math.max(maxY, p.y + ph);
+  }
+  const sx = pad - minX, sy = pad - minY;
+  pz.boardX += sx;
+  pz.boardY += sy;
+  for (const p of pz.pieces) {
+    p.x = Math.round((p.x + sx) * 100) / 100;
+    p.y = Math.round((p.y + sy) * 100) / 100;
+  }
+  pz.worldW = maxX + sx + pad;
+  pz.worldH = maxY + sy + pad;
+}
+
 // Si el grupo está cerca de su lugar en el tablero, lo fija. Devuelve true si encajó.
 function trySnapToBoard(pz, piece) {
   const pw = pz.boardW / pz.cols;
@@ -309,6 +403,18 @@ io.on('connection', (socket) => {
       io.to(room.name).emit('timer', timerPayload(pz));
       io.to(room.name).emit('completed', { elapsed: elapsedOf(pz), players: publicPlayers(room).map((p) => p.nick), scores: room.scores });
     }
+  });
+
+  socket.on('arrange', () => {
+    const pz = room && room.puzzle;
+    if (!pz || pz.finishedAt) return;
+    arrangePieces(pz);
+    const player = room.players.get(socket.id);
+    io.to(room.name).emit('arranged', {
+      by: player ? player.nick : '?',
+      boardX: pz.boardX, boardY: pz.boardY, worldW: pz.worldW, worldH: pz.worldH,
+      pieces: pz.pieces.map(pieceState),
+    });
   });
 
   socket.on('cursor', ({ x, y } = {}) => {
