@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+<div id="app">
   <!-- Pantalla de ingreso -->
   <div id="login" class="overlay">
     <form id="loginForm" class="card">
@@ -33,17 +34,23 @@
       <span id="progress" class="muted"></span>
     </div>
     <div class="right">
-      <label class="toggle" title="Mostrar la imagen tenue en el tablero">
-        <input type="checkbox" id="ghostToggle" /> Guía
-      </label>
-      <label class="toggle" title="Dibujar los bordes de las piezas muy finos">
-        <input type="checkbox" id="thinToggle" /> Bordes finos
-      </label>
       <button id="previewBtn" title="Mantené presionado para ver la imagen completa">👁 Preview</button>
-      <button id="arrangeBtn" title="Acomodar las piezas sueltas alrededor del tablero sin superponerse">Ordenar</button>
-      <button id="fitBtn" title="Centrar vista">⤢</button>
-      <button id="newBtn" class="primary">Subir imagen</button>
-      <div id="players" class="players"></div>
+      <button id="menuBtn" class="menu-btn" aria-label="Menú">☰</button>
+      <div id="tools" class="tools">
+        <label class="toggle" title="Mostrar la imagen tenue en el tablero">
+          <input type="checkbox" id="ghostToggle" /> Guía
+        </label>
+        <label class="toggle" title="Dibujar los bordes de las piezas muy finos">
+          <input type="checkbox" id="thinToggle" /> Bordes finos
+        </label>
+        <label class="toggle touch-only" title="Rotar la interfaz para jugar con el celular acostado">
+          <input type="checkbox" id="landscapeToggle" /> Modo horizontal
+        </label>
+        <button id="arrangeBtn" title="Acomodar las piezas sueltas alrededor del tablero sin superponerse">Ordenar</button>
+        <button id="fitBtn" title="Centrar vista">⤢ Centrar</button>
+        <button id="newBtn" class="primary">Subir imagen</button>
+        <div id="players" class="players"></div>
+      </div>
     </div>
   </header>
 
@@ -96,6 +103,8 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+</div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="client.js"></script>

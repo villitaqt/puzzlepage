@@ -242,6 +242,36 @@
     }
   }
 
+  // ---------- Layout móvil / modo horizontal ----------
+  // En modo horizontal forzado (solo móvil) toda la interfaz se rota 90° con CSS.
+  // "Vista" = coordenadas ya des-rotadas, que es lo que usa el canvas.
+  const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+  let landscapePref = false;
+  try { landscapePref = localStorage.getItem('puzzle-landscape') === '1'; } catch (_) {}
+  let rotated = false;
+
+  function viewW() { return rotated ? window.innerHeight : window.innerWidth; }
+  function viewH() { return rotated ? window.innerWidth : window.innerHeight; }
+
+  // Coordenadas de pantalla (clientX/Y) -> coordenadas de la vista
+  function toView(cx, cy) {
+    return rotated ? [cy, window.innerWidth - cx] : [cx, cy];
+  }
+
+  function applyLayout() {
+    rotated = isTouch && landscapePref && window.innerHeight > window.innerWidth;
+    const app = $('app');
+    app.style.width = viewW() + 'px';
+    app.style.height = viewH() + 'px';
+    document.body.classList.toggle('rotated', rotated);
+    document.body.classList.toggle('touch', isTouch);
+    document.body.classList.toggle('compact', isTouch || viewW() < 900);
+  }
+
+  function closeMenu() {
+    document.body.classList.remove('menu-open');
+  }
+
   // ---------- Cámara ----------
   function topbarHeight() {
     const tb = $('topbar');
@@ -251,12 +281,22 @@
   function fitView() {
     if (!puzzle) return;
     const top = topbarHeight();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight - top;
-    const s = Math.min(vw / puzzle.worldW, vh / puzzle.worldH) * 0.97;
+    const vw = viewW();
+    const vh = viewH() - top;
+    let s = Math.min(vw / puzzle.worldW, vh / puzzle.worldH) * 0.97;
+    if (isTouch) {
+      // En el celular, que las piezas tengan un tamaño cómodo para el dedo (~34px),
+      // sin que el tablero deje de entrar en pantalla. El resto se alcanza deslizando.
+      const comfy = 34 / Math.max(pw, ph);
+      const boardFit = Math.min(vw / puzzle.boardW, vh / puzzle.boardH) * 0.95;
+      s = Math.max(s, Math.min(comfy, boardFit));
+    }
     cam.scale = s;
-    cam.ox = (vw - puzzle.worldW * s) / 2;
-    cam.oy = top + (vh - puzzle.worldH * s) / 2;
+    // Centrar en el tablero (si todo el mundo entra, esto equivale a centrar todo)
+    const cx = puzzle.worldW * s <= vw ? puzzle.worldW / 2 : puzzle.boardX + puzzle.boardW / 2;
+    const cy = puzzle.worldH * s <= vh ? puzzle.worldH / 2 : puzzle.boardY + puzzle.boardH / 2;
+    cam.ox = vw / 2 - cx * s;
+    cam.oy = top + vh / 2 - cy * s;
   }
 
   function toWorld(sx, sy) {
@@ -272,12 +312,14 @@
   }
 
   function resize() {
+    applyLayout();
     dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(window.innerWidth * dpr);
-    canvas.height = Math.round(window.innerHeight * dpr);
+    canvas.width = Math.round(viewW() * dpr);
+    canvas.height = Math.round(viewH() * dpr);
     fitView();
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 150));
 
   // ---------- Render ----------
   function roundRect(g, x, y, w, h, r) {
@@ -328,6 +370,13 @@
         const x = p.x - pad, y = p.y - pad, w = pw + pad * 2, h = ph + pad * 2;
         if (p.heldBy) {
           ctx.save();
+          if (p.heldBy === selfId && drag) {
+            // Se agranda un poco alrededor del dedo, como si se levantara de la mesa
+            const lift = 1 + 0.06 * Math.min(1, (now - drag.t0) / 120);
+            ctx.translate(drag.wx, drag.wy);
+            ctx.scale(lift, lift);
+            ctx.translate(-drag.wx, -drag.wy);
+          }
           ctx.shadowColor = 'rgba(0,0,0,0.55)';
           ctx.shadowBlur = 18 * cam.scale * dpr;
           ctx.shadowOffsetY = 6 * cam.scale * dpr;
@@ -405,7 +454,7 @@
   function drawConfetti() {
     if (!confetti.length) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const H = window.innerHeight;
+    const H = viewH();
     confetti = confetti.filter((c) => c.y < H + 20);
     for (const c of confetti) {
       c.vy += 0.12;
@@ -422,7 +471,7 @@
   }
 
   function launchConfetti() {
-    const W = window.innerWidth;
+    const W = viewW();
     const colors = ['#ff5c5c', '#ffd35c', '#5cff8a', '#5cc8ff', '#c55cff', '#ff9d5c'];
     for (let i = 0; i < 220; i++) {
       confetti.push({
@@ -494,15 +543,29 @@
     } catch (_) { /* sin audio */ }
   }
 
+  // ---------- Vibración (respuesta táctil) ----------
+  function haptic(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (_) { /* no soportado */ }
+  }
+
   // ---------- Entrada (mouse / touch) ----------
-  const pointers = new Map(); // pointerId -> {x,y}
-  let drag = null;   // {id, offX, offY, pointerId}
+  // Reglas:
+  // - 1 dedo sobre una pieza: se agarra desde el punto tocado y se arrastra; al soltar, se suelta.
+  // - 1 dedo sobre el fondo: mueve la vista.
+  // - 2 dedos: zoom + desplazamiento (pinch). Nunca se agarra más de una pieza a la vez.
+  const pointers = new Map(); // pointerId -> {x, y} en coordenadas de la vista
+  let drag = null;   // {id, offX, offY, pointerId, t0, sx, sy, startX, startY}
   let pan = null;    // {pointerId, sx, sy, ox, oy}
-  let pinch = null;  // {dist, midX, midY}
+  let pinch = null;  // {dist, mx, my}
   let lastMoveSent = 0;
   let lastCursorSent = 0;
 
-  function hitTest(wx, wy) {
+  const TOUCH_SLOP_PX = 18;   // tolerancia para tocar piezas con el dedo
+  const MOUSE_SLOP_PX = 3;
+  const PINCH_CANCEL_MS = 250; // si el 2º dedo llega tan rápido, era un pinch y no un agarre
+
+  function hitTest(wx, wy, slopPx) {
+    // 1) Acierto exacto sobre la forma de la pieza (incluidas pestañas)
     for (let i = drawOrder.length - 1; i >= 0; i--) {
       const p = drawOrder[i];
       if (p.placed) continue;
@@ -510,7 +573,18 @@
       if (lx < -pad || ly < -pad || lx > pw + pad || ly > ph + pad) continue;
       if (hitCtx.isPointInPath(p.path, lx, ly)) return p;
     }
-    return null;
+    // 2) Tolerancia para dedos: la pieza más cercana dentro de unos píxeles
+    const tol = slopPx / cam.scale;
+    let best = null, bestD = Infinity;
+    for (let i = drawOrder.length - 1; i >= 0; i--) {
+      const p = drawOrder[i];
+      if (p.placed) continue;
+      const dx = Math.max(p.x - wx, 0, wx - (p.x + pw));
+      const dy = Math.max(p.y - wy, 0, wy - (p.y + ph));
+      const d = Math.hypot(dx, dy);
+      if (d <= tol && d < bestD) { best = p; bestD = d; }
+    }
+    return best;
   }
 
   function sendCursor(wx, wy, force) {
@@ -520,83 +594,125 @@
     socket.emit('cursor', { x: Math.round(wx), y: Math.round(wy) });
   }
 
-  canvas.addEventListener('pointerdown', (e) => {
-    canvas.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  function startPinch() {
+    const [a, b] = [...pointers.values()];
+    pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    pan = null;
+  }
 
-    if (pointers.size === 2) {
-      // Empieza pinch: cancelar pan (el drag de pieza se mantiene)
-      pan = null;
-      const [a, b] = [...pointers.values()];
-      pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
+  function releaseDrag(backToStart) {
+    if (!drag) return;
+    const p = pieces[drag.id];
+    if (p) {
+      if (backToStart) moveGroup(p, drag.startX, drag.startY);
+      socket.emit('drop', { id: p.id, x: p.x, y: p.y });
+    }
+    drag = null;
+  }
+
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* sin captura */ }
+    const [sx, sy] = toView(e.clientX, e.clientY);
+    pointers.set(e.pointerId, { x: sx, y: sy });
+    closeMenu();
+
+    if (pointers.size >= 2) {
+      if (drag) {
+        // 2º dedo justo después de tocar una pieza: era un pinch, se devuelve la pieza
+        const first = pointers.get(drag.pointerId) || { x: drag.sx, y: drag.sy };
+        const moved = Math.hypot(first.x - drag.sx, first.y - drag.sy) > 12;
+        const quick = performance.now() - drag.t0 < PINCH_CANCEL_MS;
+        if (quick && !moved) releaseDrag(true);
+        else return; // ya está llevando una pieza: se ignoran los otros dedos
+      }
+      if (pointers.size === 2) startPinch();
       return;
     }
-    if (pointers.size > 2) return;
 
-    const [wx, wy] = toWorld(e.clientX, e.clientY);
-    const p = puzzle && !timer.finished ? hitTest(wx, wy) : null;
+    const [wx, wy] = toWorld(sx, sy);
+    const slop = e.pointerType === 'mouse' ? MOUSE_SLOP_PX : TOUCH_SLOP_PX;
+    const p = puzzle && !timer.finished ? hitTest(wx, wy, slop) : null;
     const group = p ? groupMembers(p) : [];
     if (p && group.every((m) => !m.heldBy || m.heldBy === selfId)) {
-      drag = { id: p.id, offX: wx - p.x, offY: wy - p.y, pointerId: e.pointerId };
+      drag = {
+        id: p.id, offX: wx - p.x, offY: wy - p.y, pointerId: e.pointerId,
+        t0: performance.now(), sx, sy, startX: p.x, startY: p.y, wx, wy,
+      };
       for (const m of group) {
         m.heldBy = selfId;
         m.z = Number.MAX_SAFE_INTEGER; // arriba hasta que el servidor confirme
       }
       orderDirty = true;
       socket.emit('grab', { id: p.id });
-      canvas.classList.add('dragging');
+      if (e.pointerType !== 'mouse') haptic(8);
     } else {
-      pan = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, ox: cam.ox, oy: cam.oy };
-      canvas.classList.add('dragging');
+      if (p && e.pointerType !== 'mouse') haptic([6, 40, 6]); // la tiene otro jugador
+      pan = { pointerId: e.pointerId, sx, sy, ox: cam.ox, oy: cam.oy };
     }
+    canvas.classList.add('dragging');
     sendCursor(wx, wy, true);
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const [sx, sy] = toView(e.clientX, e.clientY);
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: sx, y: sy });
 
     if (pinch && pointers.size >= 2) {
       const [a, b] = [...pointers.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinch.dist > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, dist / pinch.dist);
-      pinch.dist = dist;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      cam.ox += mx - pinch.mx;
+      cam.oy += my - pinch.my;
+      if (pinch.dist > 0) zoomAt(mx, my, dist / pinch.dist);
+      pinch = { dist, mx, my };
       return;
     }
 
-    const [wx, wy] = toWorld(e.clientX, e.clientY);
+    const [wx, wy] = toWorld(sx, sy);
     if (drag && drag.pointerId === e.pointerId) {
       const p = pieces[drag.id];
       moveGroup(p, wx - drag.offX, wy - drag.offY);
+      drag.wx = wx;
+      drag.wy = wy;
       const now = performance.now();
       if (now - lastMoveSent > 33) {
         lastMoveSent = now;
         socket.emit('move', { id: p.id, x: p.x, y: p.y });
       }
     } else if (pan && pan.pointerId === e.pointerId) {
-      cam.ox = pan.ox + (e.clientX - pan.sx);
-      cam.oy = pan.oy + (e.clientY - pan.sy);
+      cam.ox = pan.ox + (sx - pan.sx);
+      cam.oy = pan.oy + (sy - pan.sy);
     }
-    if (puzzle) sendCursor(wx, wy, false);
+    if (puzzle && (e.pointerType === 'mouse' || pointers.has(e.pointerId))) sendCursor(wx, wy, false);
   });
 
   function endPointer(e) {
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinch = null;
-    if (drag && drag.pointerId === e.pointerId) {
-      const p = pieces[drag.id];
-      if (p) socket.emit('drop', { id: p.id, x: p.x, y: p.y });
-      drag = null;
-    }
+    if (drag && drag.pointerId === e.pointerId) releaseDrag(false);
     if (pan && pan.pointerId === e.pointerId) pan = null;
-    if (!drag && !pan) canvas.classList.remove('dragging');
+    if (pinch && pointers.size < 2) {
+      pinch = null;
+      // El dedo que queda sigue moviendo la vista sin saltos
+      const [id, pt] = [...pointers.entries()][0] || [];
+      if (id !== undefined && !drag) pan = { pointerId: id, sx: pt.x, sy: pt.y, ox: cam.ox, oy: cam.oy };
+    }
+    if (!drag && !pan && !pinch) canvas.classList.remove('dragging');
   }
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+    const [sx, sy] = toView(e.clientX, e.clientY);
+    zoomAt(sx, sy, Math.exp(-e.deltaY * 0.0015));
   }, { passive: false });
+
+  // Evitar el zoom de página de iOS (pellizco sobre la interfaz)
+  ['gesturestart', 'gesturechange'].forEach((ev) =>
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
 
   // ---------- Red ----------
   function showLogin(error) {
@@ -751,6 +867,7 @@
       orderDirty = true;
       if ((joins || placed) && by === selfId) {
         clickSound();
+        haptic(placed ? [14, 50, 24] : 18);
         if (points) toast(`+${points} punto${points > 1 ? 's' : ''}`, 1200);
       }
       updateHud();
@@ -913,6 +1030,21 @@
     previewBtn.addEventListener(ev, () => setPreview(false)));
   previewBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('blur', () => setPreview(false));
+
+  $('menuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.body.classList.toggle('menu-open');
+  });
+  // Las acciones del menú lo cierran; las casillas no
+  document.querySelectorAll('#tools button').forEach((b) => b.addEventListener('click', closeMenu));
+
+  $('landscapeToggle').checked = landscapePref;
+  $('landscapeToggle').addEventListener('change', (e) => {
+    landscapePref = e.target.checked;
+    try { localStorage.setItem('puzzle-landscape', landscapePref ? '1' : '0'); } catch (_) {}
+    closeMenu();
+    resize();
+  });
 
   $('arrangeBtn').addEventListener('click', () => {
     if (socket && puzzle && !timer.finished) socket.emit('arrange');

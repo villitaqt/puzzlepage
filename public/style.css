@@ -15,16 +15,37 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-canvas#board {
+input { -webkit-user-select: text; user-select: text; }
+
+/* Contenedor de toda la interfaz (JS fija su tamaño; en modo horizontal se rota) */
+#app {
   position: fixed;
-  inset: 0;
+  left: 0;
+  top: 0;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
+}
+body.rotated #app {
+  transform-origin: top left;
+  transform: rotate(90deg) translateY(-100%);
+}
+
+canvas#board {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   display: block;
   touch-action: none;
   cursor: grab;
@@ -44,6 +65,7 @@ button {
   padding: 7px 12px;
   cursor: pointer;
 }
+button { touch-action: manipulation; }
 button:hover { filter: brightness(1.15); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent-2); color: #fff; }
@@ -176,3 +198,36 @@ header#topbar {
 
 #previewBtn { user-select: none; -webkit-user-select: none; touch-action: none; }
 #previewBtn.active { background: var(--accent); border-color: var(--accent-2); color: #fff; }
+
+/* ---------- Menú / móvil ---------- */
+.tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.menu-btn { display: none; font-size: 18px; padding: 6px 12px; }
+.touch-only { display: none; }
+body.touch .touch-only { display: flex; }
+
+body.compact header#topbar { flex-wrap: nowrap; padding: 6px 10px; }
+body.compact .menu-btn { display: inline-block; }
+body.compact .tools {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 12px;
+  min-width: 220px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--panel);
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.5);
+}
+body.compact.menu-open .tools { display: flex; }
+body.compact .tools .toggle { font-size: 16px; gap: 10px; min-height: 32px; }
+body.compact .tools .toggle input { width: 20px; height: 20px; }
+body.compact button { min-height: 40px; }
+body.compact .players { flex-direction: column; }
+body.compact .timer { font-size: 18px; }
+body.compact .logo { display: none; }
