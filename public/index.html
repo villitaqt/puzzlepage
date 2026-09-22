@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Puzzle Cooperativo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧩</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Pantalla de ingreso -->
+  <div id="login" class="overlay">
+    <form id="loginForm" class="card">
+      <h1>🧩 Puzzle Cooperativo</h1>
+      <p class="muted">Armen rompecabezas juntos en tiempo real.</p>
+      <label>Tu nickname
+        <input id="nickInput" maxlength="20" autocomplete="off" placeholder="Ej: Diego" required autofocus />
+      </label>
+      <button type="submit" class="primary">Entrar a la partida</button>
+      <p class="muted small" id="roomHint"></p>
+    </form>
+  </div>
+
+  <!-- Barra superior -->
+  <header id="topbar" class="hidden">
+    <div class="left">
+      <span class="logo">🧩</span>
+      <span id="timer" class="timer">00:00</span>
+      <span id="progress" class="muted"></span>
+    </div>
+    <div class="right">
+      <label class="toggle" title="Mostrar la imagen tenue en el tablero">
+        <input type="checkbox" id="ghostToggle" /> Guía
+      </label>
+      <button id="fitBtn" title="Centrar vista">⤢</button>
+      <button id="newBtn" class="primary">Subir imagen</button>
+      <div id="players" class="players"></div>
+    </div>
+  </header>
+
+  <canvas id="board"></canvas>
+
+  <div id="empty" class="center-msg hidden">
+    <p>No hay ningún puzzle todavía.</p>
+    <p class="muted">Cualquiera puede subir una imagen para empezar.</p>
+  </div>
+
+  <!-- Modal para subir imagen -->
+  <div id="uploadModal" class="overlay hidden">
+    <form id="uploadForm" class="card">
+      <h2>Nuevo puzzle</h2>
+      <label class="drop" id="dropZone">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <img id="preview" class="hidden" alt="" />
+        <span id="dropText">Hacé clic o arrastrá una imagen acá</span>
+      </label>
+      <label>Cantidad de piezas: <b id="countLabel">48</b>
+        <input type="range" id="countInput" min="4" max="500" step="1" value="48" />
+      </label>
+      <div class="presets">
+        <button type="button" data-n="12">12</button>
+        <button type="button" data-n="48">48</button>
+        <button type="button" data-n="100">100</button>
+        <button type="button" data-n="200">200</button>
+        <button type="button" data-n="300">300</button>
+      </div>
+      <p id="replaceWarn" class="warn hidden">⚠️ Esto reemplaza el puzzle actual para todos.</p>
+      <div class="actions">
+        <button type="button" id="cancelUpload">Cancelar</button>
+        <button type="submit" class="primary" id="submitUpload" disabled>Crear puzzle</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Completado -->
+  <div id="doneModal" class="overlay hidden">
+    <div class="card center">
+      <h2>🎉 ¡Puzzle completado!</h2>
+      <p class="big" id="doneTime">00:00</p>
+      <ol id="doneScores" class="scores"></ol>
+      <p class="muted" id="donePlayers"></p>
+      <div class="actions">
+        <button id="closeDone">Ver puzzle</button>
+        <button id="doneNew" class="primary">Otro puzzle</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
