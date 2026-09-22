@@ -26,6 +26,15 @@ Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
   lugar del tablero da 1 punto más. Se ven en la barra superior y al final hay un ranking.
   Se reinician con cada puzzle nuevo.
 - **Mover la vista:** arrastrar el fondo. **Zoom:** rueda del mouse o pellizco en el celular.
+- **En el celular:**
+  - Tocá una pieza desde cualquier punto (hay tolerancia para el dedo) y arrastrala; al levantar
+    el dedo se suelta. No hace falta doble toque.
+  - Un dedo sobre el fondo mueve la vista; dos dedos hacen zoom y desplazan.
+  - Solo se lleva una pieza a la vez: mientras arrastrás, los otros dedos no agarran nada. Si
+    apoyás el segundo dedo enseguida, se entiende como pellizco y la pieza vuelve a su lugar.
+  - Vibra al agarrar, al conectar y al encajar (en Android; iOS no permite vibrar desde la web).
+  - Las herramientas están en el menú ☰. **Modo horizontal** rota toda la interfaz para jugar
+    con el celular acostado (se recuerda en el dispositivo).
 - **⤢** recentra la vista. **Guía** muestra la imagen tenue dentro del tablero.
 - **👁 Preview:** mantené presionado para ver la imagen completa a todo color; al soltar desaparece.
 - **Bordes finos:** dibuja las piezas con un contorno casi invisible (se recuerda en tu navegador).
