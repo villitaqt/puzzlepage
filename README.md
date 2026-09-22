@@ -10,8 +10,10 @@ manito de los demás. El timer arranca cuando alguien toca la primera pieza y se
 
 ```bash
 npm install
-npm start
+PUZZLE_PASSWORD=mi-clave npm start
 ```
+
+En PowerShell: `$env:PUZZLE_PASSWORD="mi-clave"; npm start`
 
 Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
 
@@ -29,7 +31,6 @@ Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
 - **Bordes finos:** dibuja las piezas con un contorno casi invisible (se recuerda en tu navegador).
 - **Ordenar:** acomoda todas las piezas y grupos sueltos alrededor del tablero, sin superponerse.
   Los grupos ya conectados y las piezas colocadas no se tocan. Afecta a todos los jugadores.
-- **Salas privadas:** `https://tu-app/?sala=amigos` (sin `?sala` todos entran a la sala común).
 
 ## Cómo funciona
 
@@ -40,6 +41,33 @@ Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
 - `public/client.js`: dibuja todo en un `<canvas>`. Cada pieza se construye con curvas Bézier
   a partir de los bordes que manda el servidor y se pre-renderiza recortando la imagen.
 - La imagen se reduce en el navegador (máx. 1600 px, JPEG) antes de subirse.
+
+## Seguridad y privacidad
+
+Hay una sola partida, protegida con contraseña:
+
+- **Contraseña para entrar:** se configura con la variable de entorno `PUZZLE_PASSWORD`.
+  Sin ella el servidor rechaza todas las conexiones. Quien no la sabe no recibe nada: ni la
+  imagen, ni las piezas, ni los jugadores.
+- **Anti fuerza bruta:** 5 intentos fallidos desde una misma IP la bloquean 15 minutos.
+- **Imágenes cifradas:** cada navegador cifra la imagen con AES-GCM usando una clave derivada
+  de la contraseña (PBKDF2). El servidor solo guarda y reenvía bytes cifrados, y los demás
+  jugadores la descifran en su navegador. Además la imagen se recodifica antes de subirla, así
+  que se pierden los metadatos EXIF (por ejemplo, la ubicación GPS).
+- **En tránsito:** Render sirve todo por HTTPS/WSS.
+- **Buscadores:** `robots.txt` y `X-Robots-Tag: noindex` evitan que la página se indexe.
+
+Límites a tener en cuenta:
+- Cualquiera que sepa la contraseña ve todo. Usá una larga (idealmente una frase) y cambiala
+  en Render si se filtra.
+- El servidor conoce la contraseña, así que en teoría podría derivar la clave. En la práctica
+  solo guarda el cifrado.
+
+### Configurarla en Render
+
+Dashboard → tu servicio → **Environment** → **Add Environment Variable**:
+`PUZZLE_PASSWORD` = tu contraseña. Guardá y Render redespliega solo. Para cambiar la
+contraseña, editá esa variable.
 
 ## Hosting gratis
 

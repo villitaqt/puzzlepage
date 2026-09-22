@@ -5,6 +5,7 @@
       "name": "puzzle",
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],
+      "env": { "PUZZLE_PASSWORD": "prueba" },
       "port": 3000
     }
   ]
