@@ -48,7 +48,7 @@ button:hover { filter: brightness(1.15); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent-2); color: #fff; }
 
-input[type="text"], input:not([type]) {
+input[type="text"], input[type="password"], input:not([type]) {
   width: 100%;
   font: inherit;
   padding: 10px 12px;

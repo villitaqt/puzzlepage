@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
@@ -11,12 +12,70 @@ const SNAP_RATIO = 0.3; // distancia de encaje en el tablero relativa al tamaño
 const JOIN_RATIO = 0.25; // distancia para conectar dos piezas entre sí
 const EMPTY_ROOM_TTL = 30 * 60 * 1000; // borrar salas vacías tras 30 min
 
+const PASSWORD = process.env.PUZZLE_PASSWORD || '';
+const MAX_FAILS = 5;
+const FAIL_WINDOW = 10 * 60 * 1000;
+const BLOCK_TIME = 15 * 60 * 1000;
+const ROOM_NAME = 'principal';
+
+if (!PASSWORD) {
+  console.warn('⚠️  PUZZLE_PASSWORD no está configurada: se rechazarán todas las conexiones.');
+}
+
 const app = express();
+app.use((_req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (_req, res) => res.send('ok'));
 
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: MAX_IMAGE_BYTES + 64 * 1024 });
+
+// ---------- Acceso con contraseña ----------
+const failures = new Map(); // ip -> { count, first, blockedUntil }
+
+function clientIp(socket) {
+  const fwd = socket.handshake.headers['x-forwarded-for'];
+  // La última IP la agrega el proxy de Render; las anteriores las puede inventar el cliente
+  return (typeof fwd === 'string' && fwd.split(',').pop().trim()) || socket.handshake.address;
+}
+
+function passwordOk(given) {
+  if (!PASSWORD || typeof given !== 'string') return false;
+  const a = crypto.createHash('sha256').update(given).digest();
+  const b = crypto.createHash('sha256').update(PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+io.use((socket, next) => {
+  const ip = clientIp(socket);
+  const now = Date.now();
+  const f = failures.get(ip);
+  if (f && f.blockedUntil > now) return next(new Error('blocked'));
+  if (!PASSWORD) return next(new Error('no-password'));
+
+  if (passwordOk(socket.handshake.auth && socket.handshake.auth.password)) {
+    failures.delete(ip);
+    return next();
+  }
+  const rec = f && now - f.first < FAIL_WINDOW ? f : { count: 0, first: now, blockedUntil: 0 };
+  rec.count++;
+  if (rec.count >= MAX_FAILS) rec.blockedUntil = now + BLOCK_TIME;
+  failures.set(ip, rec);
+  next(new Error(rec.blockedUntil ? 'blocked' : 'unauthorized'));
+});
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, f] of failures) {
+    if (f.blockedUntil < now && now - f.first > FAIL_WINDOW) failures.delete(ip);
+  }
+}, 60 * 1000).unref();
 
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4',
   '#f032e6', '#9a6324', '#469990', '#800000', '#808000', '#000075'];
@@ -309,10 +368,10 @@ function isNum(n) {
 io.on('connection', (socket) => {
   let room = null;
 
-  socket.on('join', ({ nick, room: roomName } = {}) => {
+  socket.on('join', ({ nick } = {}) => {
     if (room) return;
     nick = String(nick || '').trim().slice(0, 20) || 'Anónimo';
-    roomName = String(roomName || 'principal').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 30) || 'principal';
+    const roomName = ROOM_NAME;
     room = getRoom(roomName);
     socket.join(roomName);
 
@@ -331,12 +390,14 @@ io.on('connection', (socket) => {
     socket.to(roomName).emit('playerJoined', { id: socket.id, nick, color });
   });
 
-  socket.on('upload', ({ image, width, height, count } = {}) => {
+  // La imagen llega cifrada (AES-GCM en el navegador): el servidor solo guarda bytes opacos
+  socket.on('upload', ({ iv, data, width, height, count } = {}) => {
     if (!room) return;
-    if (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(image)) {
-      return socket.emit('errorMsg', 'Formato de imagen no válido.');
+    if (!Buffer.isBuffer(iv) || iv.length !== 12 || !Buffer.isBuffer(data) || data.length < 32) {
+      return socket.emit('errorMsg', 'Imagen no válida.');
     }
-    if (image.length > MAX_IMAGE_BYTES) return socket.emit('errorMsg', 'La imagen es demasiado grande.');
+    if (data.length > MAX_IMAGE_BYTES) return socket.emit('errorMsg', 'La imagen es demasiado grande.');
+    const image = { iv, data };
     if (!isNum(width) || !isNum(height) || width < 50 || height < 50) {
       return socket.emit('errorMsg', 'Dimensiones de imagen no válidas.');
     }

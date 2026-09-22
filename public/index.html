@@ -16,8 +16,12 @@
       <label>Tu nickname
         <input id="nickInput" maxlength="20" autocomplete="off" placeholder="Ej: Diego" required autofocus />
       </label>
-      <button type="submit" class="primary">Entrar a la partida</button>
-      <p class="muted small" id="roomHint"></p>
+      <label>Contraseña de la partida
+        <input id="passInput" type="password" autocomplete="current-password" required />
+      </label>
+      <p id="loginError" class="warn hidden"></p>
+      <button type="submit" class="primary" id="loginBtn">Entrar a la partida</button>
+      <p class="muted small">🔒 Las imágenes se cifran en tu navegador con la contraseña.</p>
     </form>
   </div>
 

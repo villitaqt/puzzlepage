@@ -7,8 +7,28 @@
   const ctx = canvas.getContext('2d');
   const hitCtx = document.createElement('canvas').getContext('2d');
 
-  const params = new URLSearchParams(location.search);
-  const roomName = (params.get('sala') || 'principal').toLowerCase();
+  // ---------- Cifrado de imágenes (AES-GCM, clave derivada de la contraseña) ----------
+  const KDF_SALT = new TextEncoder().encode('puzzle-coop/imagenes/v1');
+  const KDF_ITERATIONS = 200000;
+  let encKey = null;
+
+  async function deriveKey(password) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: KDF_SALT, iterations: KDF_ITERATIONS, hash: 'SHA-256' },
+      base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+
+  async function encryptBlob(blob) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, encKey, await blob.arrayBuffer());
+    return { iv, data };
+  }
+
+  async function decryptToUrl({ iv, data }) {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(iv) }, encKey, data);
+    return URL.createObjectURL(new Blob([plain], { type: 'image/jpeg' }));
+  }
 
   function toast(msg, ms = 2500) {
     const t = $('toast');
@@ -30,6 +50,7 @@
   let socket = null;
   let selfId = null;
   let nick = null;
+  let password = null;
   const players = new Map(); // id -> {nick,color,x,y,lastSeen}
   let scores = {};           // nick -> puntos
 
@@ -38,6 +59,7 @@
   let drawOrder = [];  // piezas ordenadas por z
   let orderDirty = true;
   let img = null;
+  let imgUrl = null; // object URL de la imagen descifrada
   let pw = 0, ph = 0, pad = 0;
   let showGhost = false;
   let showPreview = false;
@@ -160,8 +182,26 @@
       return;
     }
     const sameImage = puzzle && puzzle.id === pz.id && img;
-    const newImg = sameImage ? img : await loadImage(pz.image);
-    if (token !== buildToken) return;
+    let newImg = img;
+    let newUrl = null;
+    if (!sameImage) {
+      try {
+        newUrl = await decryptToUrl(pz.image);
+        newImg = await loadImage(newUrl);
+      } catch (_) {
+        if (newUrl) URL.revokeObjectURL(newUrl);
+        if (token === buildToken) toast('⚠️ No se pudo descifrar la imagen', 4000);
+        return;
+      }
+    }
+    if (token !== buildToken) {
+      if (newUrl) URL.revokeObjectURL(newUrl);
+      return;
+    }
+    if (newUrl) {
+      if (imgUrl) URL.revokeObjectURL(imgUrl);
+      imgUrl = newUrl;
+    }
 
     const oldPieces = sameImage ? pieces : null;
     puzzle = pz;
@@ -559,11 +599,39 @@
   }, { passive: false });
 
   // ---------- Red ----------
+  function showLogin(error) {
+    $('login').classList.remove('hidden');
+    $('topbar').classList.add('hidden');
+    $('empty').classList.add('hidden');
+    $('loginError').textContent = error || '';
+    $('loginError').classList.toggle('hidden', !error);
+    $('loginBtn').disabled = false;
+  }
+
   function connect() {
-    socket = io({ transports: ['websocket', 'polling'] });
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+    }
+    socket = io({ transports: ['websocket', 'polling'], auth: { password } });
 
     socket.on('connect', () => {
-      socket.emit('join', { nick, room: roomName });
+      $('login').classList.add('hidden');
+      $('topbar').classList.remove('hidden');
+      resize();
+      socket.emit('join', { nick });
+    });
+
+    socket.on('connect_error', (err) => {
+      const msg = {
+        unauthorized: 'Contraseña incorrecta.',
+        blocked: 'Demasiados intentos fallidos. Esperá 15 minutos.',
+        'no-password': 'El servidor no tiene contraseña configurada (PUZZLE_PASSWORD).',
+      }[err.message];
+      if (!msg) return; // error de red: Socket.IO reintenta solo
+      socket.disconnect();
+      try { sessionStorage.removeItem('puzzle-pass'); } catch (_) {}
+      showLogin(msg);
     });
 
     socket.on('disconnect', () => {
@@ -707,24 +775,35 @@
   }
 
   // ---------- Login ----------
-  $('roomHint').textContent = roomName === 'principal'
-    ? 'Tip: agregá ?sala=nombre a la URL para una partida privada.'
-    : `Sala: ${roomName}`;
-  try { $('nickInput').value = localStorage.getItem('puzzle-nick') || ''; } catch (_) {}
+  try {
+    $('nickInput').value = localStorage.getItem('puzzle-nick') || '';
+    $('passInput').value = sessionStorage.getItem('puzzle-pass') || '';
+  } catch (_) {}
 
-  $('loginForm').addEventListener('submit', (e) => {
+  $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     nick = $('nickInput').value.trim().slice(0, 20);
-    if (!nick) return;
-    try { localStorage.setItem('puzzle-nick', nick); } catch (_) {}
-    $('login').classList.add('hidden');
-    $('topbar').classList.remove('hidden');
-    resize();
+    password = $('passInput').value;
+    if (!nick || !password) return;
+    if (!window.crypto || !crypto.subtle) {
+      return showLogin('Este navegador no soporta cifrado (se necesita HTTPS).');
+    }
+    try {
+      localStorage.setItem('puzzle-nick', nick);
+      sessionStorage.setItem('puzzle-pass', password);
+    } catch (_) {}
+    $('loginBtn').disabled = true;
+    $('loginError').classList.add('hidden');
+    encKey = await deriveKey(password);
     connect();
   });
 
   // ---------- Subida de imagen ----------
-  let pending = null; // {dataUrl, width, height}
+  let pending = null; // {blob, url, width, height}
+
+  function canvasToBlob(cv, q) {
+    return new Promise((resolve) => cv.toBlob(resolve, 'image/jpeg', q));
+  }
 
   function estimateGrid(n, aspect) {
     let cols = Math.max(2, Math.round(Math.sqrt(n * aspect)));
@@ -762,13 +841,14 @@
       cv.height = h;
       cv.getContext('2d').drawImage(im, 0, 0, w, h);
       let q = 0.85;
-      let dataUrl = cv.toDataURL('image/jpeg', q);
-      while (dataUrl.length > 3.5 * 1024 * 1024 && q > 0.4) {
+      let blob = await canvasToBlob(cv, q);
+      while (blob.size > 3.5 * 1024 * 1024 && q > 0.4) {
         q -= 0.1;
-        dataUrl = cv.toDataURL('image/jpeg', q);
+        blob = await canvasToBlob(cv, q);
       }
-      pending = { dataUrl, width: w, height: h };
-      $('preview').src = dataUrl;
+      if (pending) URL.revokeObjectURL(pending.url);
+      pending = { blob, url: URL.createObjectURL(blob), width: w, height: h };
+      $('preview').src = pending.url;
       $('preview').classList.remove('hidden');
       $('dropText').classList.add('hidden');
       $('submitUpload').disabled = false;
@@ -798,15 +878,16 @@
     handleFile(e.dataTransfer.files[0]);
   });
 
-  $('uploadForm').addEventListener('submit', (e) => {
+  $('uploadForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!pending || !socket) return;
+    if (!pending || !socket || !encKey) return;
+    $('uploadModal').classList.add('hidden');
+    toast('Cifrando y generando puzzle…');
+    const { iv, data } = await encryptBlob(pending.blob);
     socket.emit('upload', {
-      image: pending.dataUrl, width: pending.width, height: pending.height,
+      iv, data, width: pending.width, height: pending.height,
       count: +$('countInput').value,
     });
-    $('uploadModal').classList.add('hidden');
-    toast('Generando puzzle…');
   });
 
   $('ghostToggle').addEventListener('change', (e) => { showGhost = e.target.checked; });
