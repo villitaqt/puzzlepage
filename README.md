@@ -25,6 +25,10 @@ Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
   Se reinician con cada puzzle nuevo.
 - **Mover la vista:** arrastrar el fondo. **Zoom:** rueda del mouse o pellizco en el celular.
 - **⤢** recentra la vista. **Guía** muestra la imagen tenue dentro del tablero.
+- **👁 Preview:** mantené presionado para ver la imagen completa a todo color; al soltar desaparece.
+- **Bordes finos:** dibuja las piezas con un contorno casi invisible (se recuerda en tu navegador).
+- **Ordenar:** acomoda todas las piezas y grupos sueltos alrededor del tablero, sin superponerse.
+  Los grupos ya conectados y las piezas colocadas no se tocan. Afecta a todos los jugadores.
 - **Salas privadas:** `https://tu-app/?sala=amigos` (sin `?sala` todos entran a la sala común).
 
 ## Cómo funciona
