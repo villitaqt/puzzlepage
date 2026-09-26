@@ -32,6 +32,8 @@ Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
   - Un dedo sobre el fondo mueve la vista; dos dedos hacen zoom y desplazan.
   - Solo se lleva una pieza a la vez: mientras arrastrás, los otros dedos no agarran nada. Si
     apoyás el segundo dedo enseguida, se entiende como pellizco y la pieza vuelve a su lugar.
+  - Mientras sujetás una pieza, podés navegar con la otra mano: **un dedo extra** mueve la vista
+    y **dos dedos extra** hacen zoom (pellizco). La pieza sigue pegada al dedo que la sujeta.
   - Vibra al agarrar, al conectar y al encajar (en Android; iOS no permite vibrar desde la web).
   - Las herramientas están en el menú ☰. **Modo horizontal** rota toda la interfaz para jugar
     con el celular acostado (se recuerda en el dispositivo).

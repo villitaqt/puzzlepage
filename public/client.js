@@ -553,10 +553,12 @@
   // - 1 dedo sobre una pieza: se agarra desde el punto tocado y se arrastra; al soltar, se suelta.
   // - 1 dedo sobre el fondo: mueve la vista.
   // - 2 dedos: zoom + desplazamiento (pinch). Nunca se agarra más de una pieza a la vez.
+  // - Sujetando una pieza, los demás dedos navegan: 1 dedo extra mueve la vista y
+  //   2 dedos extra hacen zoom. La pieza sigue bajo el dedo que la sujeta.
   const pointers = new Map(); // pointerId -> {x, y} en coordenadas de la vista
   let drag = null;   // {id, offX, offY, pointerId, t0, sx, sy, startX, startY}
   let pan = null;    // {pointerId, sx, sy, ox, oy}
-  let pinch = null;  // {dist, mx, my}
+  let pinch = null;  // {a, b, dist, mx, my} (a y b son pointerIds)
   let lastMoveSent = 0;
   let lastCursorSent = 0;
 
@@ -594,10 +596,43 @@
     socket.emit('cursor', { x: Math.round(wx), y: Math.round(wy) });
   }
 
-  function startPinch() {
-    const [a, b] = [...pointers.values()];
-    pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+  // Reinicia la navegación con los dedos que no sujetan pieza (sin saltos de vista)
+  function resetNav() {
+    const ids = [...pointers.keys()].filter((id) => !drag || id !== drag.pointerId);
     pan = null;
+    pinch = null;
+    if (ids.length === 1) {
+      const pt = pointers.get(ids[0]);
+      pan = { pointerId: ids[0], sx: pt.x, sy: pt.y, ox: cam.ox, oy: cam.oy };
+    } else if (ids.length >= 2) {
+      const a = pointers.get(ids[0]), b = pointers.get(ids[1]);
+      pinch = {
+        a: ids[0], b: ids[1],
+        dist: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+      };
+    }
+  }
+
+  // Coloca la pieza agarrada bajo el punto de la vista (sx, sy)
+  function dragTo(sx, sy) {
+    const p = pieces[drag.id];
+    if (!p) return;
+    const [wx, wy] = toWorld(sx, sy);
+    moveGroup(p, wx - drag.offX, wy - drag.offY);
+    drag.wx = wx;
+    drag.wy = wy;
+    const now = performance.now();
+    if (now - lastMoveSent > 33) {
+      lastMoveSent = now;
+      socket.emit('move', { id: p.id, x: p.x, y: p.y });
+    }
+  }
+
+  // Tras mover la cámara, la pieza agarrada vuelve a quedar bajo su dedo
+  function followDragFinger() {
+    if (!drag) return;
+    const f = pointers.get(drag.pointerId);
+    if (f) dragTo(f.x, f.y);
   }
 
   function releaseDrag(backToStart) {
@@ -626,9 +661,10 @@
         const moved = Math.hypot(first.x - drag.sx, first.y - drag.sy) > 12;
         const quick = performance.now() - drag.t0 < PINCH_CANCEL_MS;
         if (quick && !moved) releaseDrag(true);
-        else return; // ya está llevando una pieza: se ignoran los otros dedos
       }
-      if (pointers.size === 2) startPinch();
+      // Los dedos libres navegan (con o sin pieza agarrada)
+      resetNav();
+      canvas.classList.add('dragging');
       return;
     }
 
@@ -660,44 +696,37 @@
     const [sx, sy] = toView(e.clientX, e.clientY);
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: sx, y: sy });
 
-    if (pinch && pointers.size >= 2) {
-      const [a, b] = [...pointers.values()];
+    if (drag && drag.pointerId === e.pointerId) {
+      dragTo(sx, sy);
+    } else if (pinch && (pinch.a === e.pointerId || pinch.b === e.pointerId)) {
+      const a = pointers.get(pinch.a), b = pointers.get(pinch.b);
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       cam.ox += mx - pinch.mx;
       cam.oy += my - pinch.my;
       if (pinch.dist > 0) zoomAt(mx, my, dist / pinch.dist);
-      pinch = { dist, mx, my };
+      Object.assign(pinch, { dist, mx, my });
+      followDragFinger();
       return;
-    }
-
-    const [wx, wy] = toWorld(sx, sy);
-    if (drag && drag.pointerId === e.pointerId) {
-      const p = pieces[drag.id];
-      moveGroup(p, wx - drag.offX, wy - drag.offY);
-      drag.wx = wx;
-      drag.wy = wy;
-      const now = performance.now();
-      if (now - lastMoveSent > 33) {
-        lastMoveSent = now;
-        socket.emit('move', { id: p.id, x: p.x, y: p.y });
-      }
     } else if (pan && pan.pointerId === e.pointerId) {
       cam.ox = pan.ox + (sx - pan.sx);
       cam.oy = pan.oy + (sy - pan.sy);
+      followDragFinger();
+      if (drag) return; // el cursor remoto sigue a la pieza, no al dedo que navega
+    } else if (pinch || (drag && pointers.has(e.pointerId))) {
+      return; // dedo extra que no participa en la navegación
     }
+    const [wx, wy] = toWorld(sx, sy);
     if (puzzle && (e.pointerType === 'mouse' || pointers.has(e.pointerId))) sendCursor(wx, wy, false);
   });
 
   function endPointer(e) {
-    pointers.delete(e.pointerId);
-    if (drag && drag.pointerId === e.pointerId) releaseDrag(false);
-    if (pan && pan.pointerId === e.pointerId) pan = null;
-    if (pinch && pointers.size < 2) {
-      pinch = null;
-      // El dedo que queda sigue moviendo la vista sin saltos
-      const [id, pt] = [...pointers.entries()][0] || [];
-      if (id !== undefined && !drag) pan = { pointerId: id, sx: pt.x, sy: pt.y, ox: cam.ox, oy: cam.oy };
+    if (!pointers.delete(e.pointerId)) return;
+    if (drag && drag.pointerId === e.pointerId) {
+      releaseDrag(false);
+    } else if ((pan && pan.pointerId === e.pointerId) || pinch) {
+      // Los dedos que quedan siguen navegando sin saltos
+      resetNav();
     }
     if (!drag && !pan && !pinch) canvas.classList.remove('dragging');
   }
