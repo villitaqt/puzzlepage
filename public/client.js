@@ -559,6 +559,7 @@
   let drag = null;   // {id, offX, offY, pointerId, t0, sx, sy, startX, startY}
   let pan = null;    // {pointerId, sx, sy, ox, oy}
   let pinch = null;  // {a, b, dist, mx, my} (a y b son pointerIds)
+  let rightPan = null; // {sx, sy, ox, oy}: en escritorio, clic derecho navega sin soltar la pieza
   let lastMoveSent = 0;
   let lastCursorSent = 0;
 
@@ -651,6 +652,14 @@
     e.preventDefault();
     try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* sin captura */ }
     const [sx, sy] = toView(e.clientX, e.clientY);
+
+    if (e.button === 2) {
+      // Clic derecho: si hay una pieza agarrada, navega sin soltarla (la pieza
+      // queda fija en pantalla, en el punto donde se la agarró, mientras se mueve la vista)
+      if (drag) rightPan = { sx, sy, ox: cam.ox, oy: cam.oy };
+      return;
+    }
+
     pointers.set(e.pointerId, { x: sx, y: sy });
     closeMenu();
 
@@ -696,6 +705,13 @@
     const [sx, sy] = toView(e.clientX, e.clientY);
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: sx, y: sy });
 
+    if (rightPan) {
+      cam.ox = rightPan.ox + (sx - rightPan.sx);
+      cam.oy = rightPan.oy + (sy - rightPan.sy);
+      if (drag) dragTo(drag.sx, drag.sy); // la pieza no se mueve: solo navega la vista
+      return;
+    }
+
     if (drag && drag.pointerId === e.pointerId) {
       dragTo(sx, sy);
     } else if (pinch && (pinch.a === e.pointerId || pinch.b === e.pointerId)) {
@@ -721,6 +737,10 @@
   });
 
   function endPointer(e) {
+    if (e.pointerType === 'mouse' && e.button === 2) {
+      rightPan = null;
+      return;
+    }
     if (!pointers.delete(e.pointerId)) return;
     if (drag && drag.pointerId === e.pointerId) {
       releaseDrag(false);
