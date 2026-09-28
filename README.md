@@ -26,6 +26,9 @@ Abrí http://localhost:3000 (en dos pestañas para probar el cooperativo).
   lugar del tablero da 1 punto más. Se ven en la barra superior y al final hay un ranking.
   Se reinician con cada puzzle nuevo.
 - **Mover la vista:** arrastrar el fondo. **Zoom:** rueda del mouse o pellizco en el celular.
+- **En la compu:** si estás sujetando una pieza (clic izquierdo), podés mantener apretado el
+  **clic derecho** y mover el mouse para navegar por el tablero sin soltarla; la pieza queda
+  fija en pantalla mientras se mueve la vista debajo.
 - **En el celular:**
   - Tocá una pieza desde cualquier punto (hay tolerancia para el dedo) y arrastrala; al levantar
     el dedo se suelta. No hace falta doble toque.
